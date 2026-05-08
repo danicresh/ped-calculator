@@ -8,23 +8,21 @@ const CATEGORY_BY_HEX = {
 };
 
 const CALIBRATION = {
-  // Replica la logica Delphi:
+  // Replica la logica Delphi originale:
   // X = 200 + log10(valore ascissa) * 100
   // Y = 500 - log10(PS) * 100
   xZero: 200,
   yZero: 500,
   pxPerDecade: 100,
 
-  // Limiti effettivi colorati nelle PNG fornite.
-  // Servono per evitare letture fuori grafico a 10000 esatti.
+  // Area grafico effettiva nelle immagini 632x695.
   xMin: 100,
-  xMax: 593,
+  xMax: 594,
   yMin: 100,
-  yMax: 594
+  yMax: 596
 };
 
-const MAP_SIZE = { width: 632, height: 695 };
-const BOUNDARY_MAX_OFFSET_PX = 8;
+const BOUNDARY_MAX_OFFSET_PX = 6;
 
 const form = document.getElementById("pedForm");
 const productEl = document.getElementById("product");
@@ -42,8 +40,10 @@ const mapCanvas = document.getElementById("mapCanvas");
 const visibleCtx = visibleCanvas.getContext("2d", { willReadFrequently: false });
 const mapCtx = mapCanvas.getContext("2d", { willReadFrequently: true });
 
-let currentTable = 1;
-let currentImage = null;
+let currentTable = 0;
+let currentViewImage = null;
+let currentMapImage = null;
+let lastMarker = null;
 
 function tableFromSelection() {
   const product = productEl.value;
@@ -75,66 +75,76 @@ function updateControls() {
 
   document.getElementById("stateWrap").style.display = isSteam ? "none" : "";
   document.getElementById("groupWrap").style.display = isSteam ? "none" : "";
-
-  xValueLabelEl.textContent = product === "pipe" ? "DN" : "Volume [L]";
+  xValueLabelEl.textContent = product === "pipe" ? "DN [mm]" : "Volume [L]";
 
   const table = tableFromSelection();
   tableNoEl.textContent = table;
-  loadMap(table);
+  loadImages(table);
 }
 
-function loadMap(tableNo) {
-  if (currentTable === tableNo && currentImage) {
-    drawMap();
+function loadImages(tableNo) {
+  if (currentTable === tableNo && currentViewImage && currentMapImage) {
+    drawView(lastMarker);
     return;
   }
 
   currentTable = tableNo;
-  const img = new Image();
-  img.onload = () => {
-    currentImage = img;
-    visibleCanvas.width = img.width;
-    visibleCanvas.height = img.height;
-    mapCanvas.width = img.width;
-    mapCanvas.height = img.height;
+  currentViewImage = null;
+  currentMapImage = null;
+  lastMarker = null;
 
-    mapCtx.clearRect(0, 0, img.width, img.height);
-    mapCtx.drawImage(img, 0, 0);
-
-    drawMap();
+  const viewImg = new Image();
+  viewImg.onload = () => {
+    if (currentTable !== tableNo) return;
+    currentViewImage = viewImg;
+    visibleCanvas.width = viewImg.width;
+    visibleCanvas.height = viewImg.height;
+    drawView(lastMarker);
   };
-  img.src = `maps/tab-${tableNo}_0.png`;
+  viewImg.src = `views/tab-${tableNo}_1.jpg`;
+
+  const mapImg = new Image();
+  mapImg.onload = () => {
+    if (currentTable !== tableNo) return;
+    currentMapImage = mapImg;
+    mapCanvas.width = mapImg.width;
+    mapCanvas.height = mapImg.height;
+    mapCtx.clearRect(0, 0, mapImg.width, mapImg.height);
+    mapCtx.drawImage(mapImg, 0, 0);
+  };
+  mapImg.src = `maps/tab-${tableNo}_0.png`;
 }
 
-function drawMap(marker) {
-  if (!currentImage) return;
+function drawView(marker) {
+  if (!currentViewImage) return;
 
   visibleCtx.clearRect(0, 0, visibleCanvas.width, visibleCanvas.height);
-  visibleCtx.drawImage(currentImage, 0, 0);
+  visibleCtx.drawImage(currentViewImage, 0, 0);
 
   if (!marker) return;
 
   const { xReal, yReal, xRead, yRead } = marker;
 
-  // Punto tecnico reale.
   visibleCtx.save();
-  visibleCtx.lineWidth = 2;
+
+  // Punto tecnico reale: bianco con bordo nero, visibile su tutti i colori.
+  visibleCtx.lineWidth = 3;
   visibleCtx.strokeStyle = "#111827";
   visibleCtx.fillStyle = "#ffffff";
   visibleCtx.beginPath();
-  visibleCtx.arc(xReal, yReal, 7, 0, Math.PI * 2);
+  visibleCtx.arc(xReal, yReal, 8, 0, Math.PI * 2);
   visibleCtx.fill();
   visibleCtx.stroke();
 
-  visibleCtx.strokeStyle = "#111827";
+  visibleCtx.lineWidth = 2;
   visibleCtx.beginPath();
-  visibleCtx.moveTo(xReal - 12, yReal);
-  visibleCtx.lineTo(xReal + 12, yReal);
-  visibleCtx.moveTo(xReal, yReal - 12);
-  visibleCtx.lineTo(xReal, yReal + 12);
+  visibleCtx.moveTo(xReal - 14, yReal);
+  visibleCtx.lineTo(xReal + 14, yReal);
+  visibleCtx.moveTo(xReal, yReal - 14);
+  visibleCtx.lineTo(xReal, yReal + 14);
   visibleCtx.stroke();
 
-  // Pixel effettivamente letto, se diverso.
+  // Pixel letto sulla mappa tecnica, se differente dal punto reale.
   if (Number.isFinite(xRead) && Number.isFinite(yRead)) {
     visibleCtx.fillStyle = "#111827";
     visibleCtx.beginPath();
@@ -169,6 +179,8 @@ function toHex(r, g, b) {
 }
 
 function pixelHexAt(x, y) {
+  if (!currentMapImage) return null;
+
   const xi = Math.round(x);
   const yi = Math.round(y);
 
@@ -189,6 +201,8 @@ function exactCategoryAt(x, y) {
 }
 
 function nearestCategoryAt(x, y) {
+  if (!currentMapImage) return null;
+
   const xi = Math.round(x);
   const yi = Math.round(y);
 
@@ -227,7 +241,9 @@ function nearestCategoryAt(x, y) {
 function lowerBoundaryCategory(xBase, yBase) {
   const candidates = [];
 
-  for (let d = 1; d <= BOUNDARY_MAX_OFFSET_PX; d += 1) {
+  // Direzione meno severa sul grafico:
+  // ascissa minore = sinistra, PS minore = basso.
+  for (let d = 0; d <= BOUNDARY_MAX_OFFSET_PX; d += 1) {
     const x = clamp(Math.round(xBase) - d, CALIBRATION.xMin, CALIBRATION.xMax);
     const y = clamp(Math.round(yBase) + d, CALIBRATION.yMin, CALIBRATION.yMax);
     const cat = exactCategoryAt(x, y);
@@ -239,8 +255,6 @@ function lowerBoundaryCategory(xBase, yBase) {
 
   if (candidates.length === 0) return null;
 
-  // Nei confini scegliamo il lato meno severo trovato nella direzione:
-  // valore ascissa minore e PS minore.
   candidates.sort((a, b) => a.rank - b.rank);
   return candidates[0];
 }
@@ -248,27 +262,42 @@ function lowerBoundaryCategory(xBase, yBase) {
 function sampleCategory(xReal, yReal, useBoundaryMode) {
   const xNominal = clamp(Math.round(xReal), CALIBRATION.xMin, CALIBRATION.xMax);
   const yNominal = clamp(Math.round(yReal), CALIBRATION.yMin, CALIBRATION.yMax);
-
   const nominal = exactCategoryAt(xNominal, yNominal);
   const nominalHex = pixelHexAt(xNominal, yNominal);
 
-  if (nominal && !useBoundaryMode) {
-    return { ...nominal, mode: "pixel-nominale" };
-  }
+  if (!useBoundaryMode) {
+    if (nominal) return { ...nominal, mode: "pixel-nominale" };
 
-  if (nominal && useBoundaryMode) {
-    return { ...nominal, mode: "pixel-nominale" };
-  }
-
-  if (useBoundaryMode) {
-    const lower = lowerBoundaryCategory(xNominal, yNominal);
-    if (lower) {
+    const nearest = nearestCategoryAt(xNominal, yNominal);
+    if (nearest) {
       return {
-        ...lower,
-        nominalHex,
-        note: "Pixel nominale non appartenente ai colori categoria: applicata lettura lato inferiore."
+        ...nearest,
+        mode: "colore-piu-vicino",
+        note: "Colore non esatto: usata categoria del colore PED piu' vicino."
       };
     }
+
+    return null;
+  }
+
+  const lower = lowerBoundaryCategory(xNominal, yNominal);
+
+  if (lower && (!nominal || lower.rank < nominal.rank)) {
+    return {
+      ...lower,
+      nominalHex,
+      note: "Applicata gestione confine: lettura dal lato inferiore, cioe' ascissa minore e PS minore."
+    };
+  }
+
+  if (nominal) return { ...nominal, mode: "pixel-nominale" };
+
+  if (lower) {
+    return {
+      ...lower,
+      nominalHex,
+      note: "Pixel nominale non appartenente ai colori categoria: applicata lettura lato inferiore."
+    };
   }
 
   const nearest = nearestCategoryAt(xNominal, yNominal);
@@ -276,7 +305,7 @@ function sampleCategory(xReal, yReal, useBoundaryMode) {
     return {
       ...nearest,
       mode: "colore-piu-vicino",
-      note: "Colore non esatto: usata categoria del colore PED più vicino."
+      note: "Colore non esatto: usata categoria del colore PED piu' vicino."
     };
   }
 
@@ -284,6 +313,10 @@ function sampleCategory(xReal, yReal, useBoundaryMode) {
 }
 
 function calculate() {
+  if (!currentMapImage || !currentViewImage) {
+    throw new Error("Le immagini della tabella non sono ancora caricate. Riprovare tra un istante.");
+  }
+
   const tableNo = tableFromSelection();
   const ps = Number(psEl.value);
   const xValue = Number(xValueEl.value);
@@ -300,12 +333,12 @@ function calculate() {
   const yRealRaw = psToYReal(ps);
   const xReal = clamp(xRealRaw, CALIBRATION.xMin, CALIBRATION.xMax);
   const yReal = clamp(yRealRaw, CALIBRATION.yMin, CALIBRATION.yMax);
-
   const clipped = xReal !== xRealRaw || yReal !== yRealRaw;
+
   const sampled = sampleCategory(xReal, yReal, boundaryModeEl.checked);
 
   if (!sampled) {
-    throw new Error("Impossibile determinare la categoria dalla mappa.");
+    throw new Error("Impossibile determinare la categoria dalla mappa tecnica.");
   }
 
   const result = {
@@ -321,7 +354,8 @@ function calculate() {
     sampled
   };
 
-  drawMap(result);
+  lastMarker = result;
+  drawView(result);
   renderResult(result);
 }
 
@@ -339,7 +373,7 @@ function renderResult(result) {
       Tabella ${result.tableNo} · PS = ${result.ps} bar · ${result.xLabel} = ${result.xValue}
     </p>
     <p class="meta">
-      Pixel letto: X=${sampled.x}, Y=${sampled.y} · Colore: ${sampled.hex || sampled.nearestHex} · Modalità: ${sampled.mode}
+      Pixel letto sulla PNG tecnica: X=${sampled.x}, Y=${sampled.y} · Colore: ${sampled.hex || sampled.nearestHex} · Modalita': ${sampled.mode}
     </p>
     ${safeNote}
     ${clippedNote}
@@ -360,7 +394,9 @@ function renderResult(result) {
     modalita: sampled.mode,
     offsetConfine: sampled.offset,
     coordinateClippate: result.clipped,
-    calibrazione: CALIBRATION
+    calibrazione: CALIBRATION,
+    immagineVisibile: `views/tab-${result.tableNo}_1.jpg`,
+    mappaTecnica: `maps/tab-${result.tableNo}_0.png`
   }, null, 2);
 }
 
@@ -395,5 +431,5 @@ window.addEventListener("load", () => {
     } catch (error) {
       renderError(error);
     }
-  }, 120);
+  }, 250);
 });
