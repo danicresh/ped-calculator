@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calcolo Categoria PED</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PED Calculator</p>
+        <h1>Calcolo categoria PED DaniCre</h1>
+        <p class="subtitle">
+          Calloneddusu calcoliamo CAT PED e gestione dei punti di confine.          
+        </p>
+      </div>
+      <div class="badge">Versione prototipo</div>
+    </header>
+
+    <section class="layout">
+      <form id="pedForm" class="card controls">
+        <h2>Dati di calcolo</h2>
+
+        <label>
+          Tipo attrezzatura
+          <select id="product">
+            <option value="vessel">Recipiente</option>
+            <option value="pipe">Tubazione</option>
+            <option value="steam">Generatore di vapore</option>
+          </select>
+        </label>
+
+        <label id="stateWrap">
+          Stato fluido
+          <select id="state">
+            <option value="gas">Gas / vapore</option>
+            <option value="liquid">Liquido</option>
+          </select>
+        </label>
+
+        <label id="groupWrap">
+          Gruppo fluido
+          <select id="fluidGroup">
+            <option value="1">Gruppo 1</option>
+            <option value="2">Gruppo 2</option>
+          </select>
+        </label>
+
+        <label>
+          PS [bar]
+          <input id="ps" type="number" min="0.1" step="any" value="200">
+        </label>
+
+        <label>
+          <span id="xValueLabel">Volume [L]</span>
+          <input id="xValue" type="number" min="0.1" step="any" value="1">
+        </label>
+
+        <label class="check">
+          <input id="boundaryMode" type="checkbox" checked>
+          <span>Gestisci i confini dal lato inferiore</span>
+        </label>
+
+        <button type="submit">Calcola</button>
+
+        <div class="table-info">
+          Tabella selezionata: <strong id="tableNo">1</strong>
+        </div>
+      </form>
+
+      <section class="card result-card">
+        <h2>Risultato</h2>
+        <div id="result" class="result empty">Inserisci i dati e premi Calcola.</div>
+
+        <details class="debug">
+          <summary>Dettagli tecnici</summary>
+          <pre id="debugOutput"></pre>
+        </details>
+      </section>
+    </section>
+
+    <section class="card map-card">
+      <div class="map-header">
+        <div>
+          <h2>Mappa tabella</h2>
+          <p>Il punto rosso indica il valore tecnico inserito. La lettura colore avviene su canvas nascosto.</p>
+        </div>
+        <div class="legend" aria-label="Legenda categorie">
+          <span><i style="background:#ff0000"></i> Classe IV</span>
+          <span><i style="background:#00bfff"></i> Classe III</span>
+          <span><i style="background:#ff7f00"></i> Classe II</span>
+          <span><i style="background:#ffff00"></i> Classe I</span>
+          <span><i style="background:#00ff00"></i> art. 3.3</span>
+          <span><i style="background:#c0dcc0"></i> N.A.</span>
+        </div>
+      </div>
+
+      <div class="canvas-wrap">
+        <canvas id="visibleCanvas" width="632" height="695"></canvas>
+        <canvas id="mapCanvas" width="632" height="695" hidden></canvas>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        Nota: questa versione usa le mappe colore fornite. Per uso ufficiale verificare sempre i risultati
+        rispetto alla direttiva PED applicabile e alle tabelle originali.
+      </p>
+    </footer>
+  </main>
+
+  <script src="js/ped.js"></script>
+</body>
+</html>
