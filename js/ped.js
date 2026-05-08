@@ -1,3 +1,9 @@
+const APP_VERSION = "3";
+
+function versioned(path) {
+  return `${path}?v=${APP_VERSION}`;
+}
+
 const CATEGORY_BY_HEX = {
   "FF0000": { key: "IV", label: "Classe IV", rank: 4, css: "#ff0000" },
   "00BFFF": { key: "III", label: "Classe III", rank: 3, css: "#00bfff" },
@@ -23,6 +29,22 @@ const CALIBRATION = {
 };
 
 const BOUNDARY_MAX_OFFSET_PX = 6;
+const BOUNDARY_REL_TOL = 1e-10;
+const BOUNDARY_ABS_TOL = 1e-9;
+
+// Soglie usate SOLO per capire se il punto e' esattamente su un confine.
+// Non sono una riscrittura della logica PED: il calcolo categoria resta sulla mappa colore.
+const BOUNDARY_RULES = {
+  1: { x: [1], ps: [0.5, 200, 1000], product: [25, 50, 200, 1000] },
+  2: { x: [1], ps: [0.5, 4, 50, 200, 1000, 3000], product: [50, 200, 1000, 3000] },
+  3: { x: [1], ps: [0.5, 10, 200, 500], product: [200] },
+  4: { x: [10], ps: [0.5, 10, 500, 1000], product: [1000] },
+  5: { x: [2, 1000], ps: [0.5, 10, 32], product: [50, 200, 1000, 2000] },
+  6: { x: [25, 100, 350], ps: [0.5], product: [1000, 3500] },
+  7: { x: [32, 100, 250], ps: [0.5], product: [1000, 3500, 5000] },
+  8: { x: [25], ps: [0.5, 10, 500], product: [2000] },
+  9: { x: [200], ps: [0.5, 10, 500], product: [5000] }
+};
 
 const form = document.getElementById("pedForm");
 const productEl = document.getElementById("product");
@@ -101,7 +123,7 @@ function loadImages(tableNo) {
     visibleCanvas.height = viewImg.height;
     drawView(lastMarker);
   };
-  viewImg.src = `views/tab-${tableNo}_1.jpg`;
+  viewImg.src = versioned(`views/tab-${tableNo}_1.jpg`);
 
   const mapImg = new Image();
   mapImg.onload = () => {
@@ -112,7 +134,7 @@ function loadImages(tableNo) {
     mapCtx.clearRect(0, 0, mapImg.width, mapImg.height);
     mapCtx.drawImage(mapImg, 0, 0);
   };
-  mapImg.src = `maps/tab-${tableNo}_0.png`;
+  mapImg.src = versioned(`maps/tab-${tableNo}_0.png`);
 }
 
 function drawView(marker) {
@@ -259,11 +281,36 @@ function lowerBoundaryCategory(xBase, yBase) {
   return candidates[0];
 }
 
-function sampleCategory(xReal, yReal, useBoundaryMode) {
+function isNearlyEqual(value, target) {
+  return Math.abs(value - target) <= Math.max(BOUNDARY_ABS_TOL, Math.abs(target) * BOUNDARY_REL_TOL);
+}
+
+function matchingBoundaryRules(tableNo, ps, xValue) {
+  const rules = BOUNDARY_RULES[tableNo] || {};
+  const matches = [];
+
+  for (const limit of rules.x || []) {
+    if (isNearlyEqual(xValue, limit)) matches.push(`${tableNo >= 6 ? "DN" : "V"}=${limit}`);
+  }
+
+  for (const limit of rules.ps || []) {
+    if (isNearlyEqual(ps, limit)) matches.push(`PS=${limit}`);
+  }
+
+  for (const limit of rules.product || []) {
+    if (isNearlyEqual(ps * xValue, limit)) matches.push(`PS x ${tableNo >= 6 ? "DN" : "V"}=${limit}`);
+  }
+
+  return matches;
+}
+
+function sampleCategory(xReal, yReal, useBoundaryMode, tableNo, ps, xValue) {
   const xNominal = clamp(Math.round(xReal), CALIBRATION.xMin, CALIBRATION.xMax);
   const yNominal = clamp(Math.round(yReal), CALIBRATION.yMin, CALIBRATION.yMax);
   const nominal = exactCategoryAt(xNominal, yNominal);
   const nominalHex = pixelHexAt(xNominal, yNominal);
+  const boundaryMatches = matchingBoundaryRules(tableNo, ps, xValue);
+  const isOnKnownBoundary = boundaryMatches.length > 0;
 
   if (!useBoundaryMode) {
     if (nominal) return { ...nominal, mode: "pixel-nominale" };
@@ -280,23 +327,31 @@ function sampleCategory(xReal, yReal, useBoundaryMode) {
     return null;
   }
 
-  const lower = lowerBoundaryCategory(xNominal, yNominal);
+  // IMPORTANTISSIMO:
+  // La lettura dal lato inferiore va applicata solo se siamo DAVVERO su una
+  // soglia nota, oppure se il pixel nominale non e' un colore categoria puro.
+  // Prima la usavamo sempre: cosi' un punto appena sopra soglia, es.
+  // Tab.1 PS=2,1 e V=500 (PS*V=1050), veniva retrocesso erroneamente in Classe III.
+  if (isOnKnownBoundary || !nominal) {
+    const lower = lowerBoundaryCategory(xNominal, yNominal);
 
-  if (lower && (!nominal || lower.rank < nominal.rank)) {
-    return {
-      ...lower,
-      nominalHex,
-      note: "Applicata gestione confine: lettura dal lato inferiore, cioe' ascissa minore e PS minore."
-    };
+    if (lower && (!nominal || lower.rank < nominal.rank)) {
+      return {
+        ...lower,
+        nominalHex,
+        boundaryMatches,
+        note: isOnKnownBoundary
+          ? `Applicata gestione confine su soglia nota (${boundaryMatches.join(", ")}): lettura dal lato inferiore.`
+          : "Pixel nominale non appartenente ai colori categoria: applicata lettura lato inferiore."
+      };
+    }
   }
 
-  if (nominal) return { ...nominal, mode: "pixel-nominale" };
-
-  if (lower) {
+  if (nominal) {
     return {
-      ...lower,
-      nominalHex,
-      note: "Pixel nominale non appartenente ai colori categoria: applicata lettura lato inferiore."
+      ...nominal,
+      mode: isOnKnownBoundary ? "pixel-nominale-su-soglia" : "pixel-nominale",
+      boundaryMatches
     };
   }
 
@@ -305,6 +360,7 @@ function sampleCategory(xReal, yReal, useBoundaryMode) {
     return {
       ...nearest,
       mode: "colore-piu-vicino",
+      boundaryMatches,
       note: "Colore non esatto: usata categoria del colore PED piu' vicino."
     };
   }
@@ -335,7 +391,7 @@ function calculate() {
   const yReal = clamp(yRealRaw, CALIBRATION.yMin, CALIBRATION.yMax);
   const clipped = xReal !== xRealRaw || yReal !== yRealRaw;
 
-  const sampled = sampleCategory(xReal, yReal, boundaryModeEl.checked);
+  const sampled = sampleCategory(xReal, yReal, boundaryModeEl.checked, tableNo, ps, xValue);
 
   if (!sampled) {
     throw new Error("Impossibile determinare la categoria dalla mappa tecnica.");
@@ -393,6 +449,7 @@ function renderResult(result) {
     categoria: sampled.label,
     modalita: sampled.mode,
     offsetConfine: sampled.offset,
+    soglieRiconosciute: sampled.boundaryMatches,
     coordinateClippate: result.clipped,
     calibrazione: CALIBRATION,
     immagineVisibile: `views/tab-${result.tableNo}_1.jpg`,
